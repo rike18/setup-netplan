@@ -6,51 +6,7 @@ import yaml
 import os
 import subprocess
 import time
-
-def bring_iface_up(iface: str):
-    try:
-        subprocess.run(
-            ["ip", "link", "set", iface, "up"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False
-        )
-    except Exception:
-        pass
-
-
-def get_iface_speed(iface: str) -> int | None:
-    speed_path = f"/sys/class/net/{iface}/speed"
-    if not os.path.isfile(speed_path):
-        return None
-
-    try:
-        with open(speed_path, "r") as f:
-            speed = f.read().strip()
-        return int(speed)
-    except Exception:
-        return None
-
-
-def detect_interfaces(target_speed: int, limit: int = None) -> list[str]:
-    found = []
-
-    for net in os.listdir("/sys/class/net"):
-        if net == "lo":
-            continue
-
-        bring_iface_up(net)
-        time.sleep(1)
-
-        speed = get_iface_speed(net)
-        if speed == target_speed:
-            if net not in found:
-                found.append(net)
-
-        if limit and len(found) >= limit:
-            break
-
-    return found
+from systemd import journal
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip-address", required=True, default=None)
@@ -63,6 +19,7 @@ netplan_cfg_name = "00-installer-config.yaml"
 
 ip = ipaddress.ip_address(args.ip_address)
 best_match = ""
+interfaces = []
 
 network_list = [
     {
@@ -179,6 +136,51 @@ network_list = [
     },
 ]
 
+def bring_iface_up(iface: str):
+    try:
+        subprocess.run(
+            ["ip", "link", "set", iface, "up"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False
+        )
+    except Exception:
+        pass
+
+
+def get_iface_speed(iface: str) -> int | None:
+    speed_path = f"/sys/class/net/{iface}/speed"
+    if not os.path.isfile(speed_path):
+        return None
+
+    try:
+        with open(speed_path, "r") as f:
+            speed = f.read().strip()
+        return int(speed)
+    except Exception:
+        return None
+
+
+def detect_interfaces(target_speed: int, limit: int = None) -> list[str]:
+    found = []
+
+    for net in os.listdir("/sys/class/net"):
+        if net == "lo":
+            continue
+
+        bring_iface_up(net)
+        time.sleep(1)
+
+        speed = get_iface_speed(net)
+        if speed == target_speed:
+            if net not in found:
+                found.append(net)
+
+        # if limit and len(found) >= limit:
+        #     break
+
+    return found
+
 subnets = [ipaddress.ip_network(i["subnet"]) for i in network_list]
 matches = [net for net in subnets if ip in net]
 
@@ -191,24 +193,23 @@ for i in network_list:
         ip_gateway = i["gateway"]
         vlan = int(i["vlan"])
 
-
 iface = detect_interfaces(10000, limit=2)
 
 if len(iface) == 2:
-    interfaces = iface
+    interfaces = iface 
 else:
     interfaces = detect_interfaces(1000)
+    
+if len(interfaces) < 1:
+    interfaces = ["eth0"]
 
-print("Detected interfaces:", interfaces)
+journal.send(f'Detected interfaces: {interfaces}', PRIORITY=6, SYSLOG_IDENTIFIER='netplan-setup')
 
 config_json = {
     "network": {
         "version": 2,
         "renderer": "networkd",
-        "ethernets": {
-            interfaces[0]: {},
-            interfaces[1]: {}
-        },
+        "ethernets": {iface: {} for iface in interfaces},
         "bonds": {
             "bond0": {
                 "interfaces": interfaces,
@@ -237,6 +238,7 @@ config_json = {
         }
     }
 }
+
 config_yaml = yaml.dump(config_json, sort_keys=False)
 
 if not os.path.exists(netplan_path):
