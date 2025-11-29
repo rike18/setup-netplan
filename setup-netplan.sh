@@ -158,6 +158,7 @@ def get_iface_speed(iface: str) -> int | None:
             speed = f.read().strip()
         return int(speed)
     except Exception:
+        
         return None
 
 
@@ -204,6 +205,9 @@ if len(interfaces) < 1:
     interfaces = ["eth0"]
 
 journal.send(f'Detected interfaces: {interfaces}', PRIORITY=6, SYSLOG_IDENTIFIER='netplan-setup')
+journal.send(f'Vlan: {vlan}', PRIORITY=6, SYSLOG_IDENTIFIER='netplan-setup')
+journal.send(f'Ip: {ip}', PRIORITY=6, SYSLOG_IDENTIFIER='netplan-setup')
+journal.send(f'Gateway: {ip_gateway}', PRIORITY=6, SYSLOG_IDENTIFIER='netplan-setup')
 
 config_json = {
     "network": {
